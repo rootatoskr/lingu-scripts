@@ -1,65 +1,179 @@
-function norm(s) {
-    return (s || '').replace(/\s+/g, ' ').trim().toLowerCase()
-}
+// lingu-scripts/lingu-markword.js
 
-function speedUpVideo() {
-    const v = document.querySelector('video')
-    if (!v) return null
-    v.muted = true
-    if (v.playbackRate !== 16) v.playbackRate = 16
-    if (v.paused && v.currentTime < v.duration) v.play().catch(() => {})
-    return v.currentSrc
-}
-
-function findButton(text) {
-    return [...document.querySelectorAll('button')].find(b => norm(b.textContent) === norm(text))
-}
-
-function optionsOnScreen(options) {
-    const buttons = [...document.querySelectorAll('button')].map(b => norm(b.textContent))
-    return options.every(o => buttons.includes(norm(o.answer)))
-}
-
-async function poll(cond, timeout) {
-    const t0 = performance.now()
-    while (performance.now() - t0 < timeout) {
-        speedUpVideo()
-        const r = cond()
-        if (r) return r
-        await new Promise(r => setTimeout(r, 30))
+function dashRow() {
+    const p = document.querySelector(".dashed-pagination");
+    if (!p) return null;
+    let best = null;
+    for (const c of p.children) {
+        if (c.children.length < 2) continue;
+        const classes = [...c.children].map((d) =>
+            d.className.replace(/\s*passed\s*/, "").trim(),
+        );
+        if (new Set(classes).size !== 1) continue;
+        if (!best || c.children.length > best.children.length) best = c;
     }
-    return false
+    return best;
+}
+
+function passedCount() {
+    const row = dashRow();
+    if (!row) return -1;
+    return [...row.children].filter((d) => d.classList.contains("passed"))
+        .length;
+}
+
+function norm(s) {
+    return (s || "").replace(/\s+/g, " ").trim();
+}
+
+function audioScreen() {
+    return document.body.innerText.includes("Натисніть, щоб відтворити звук");
+}
+
+async function waitFor(cond, timeout = 15000) {
+    const t0 = performance.now();
+    let clicked = false;
+    while (performance.now() - t0 < timeout) {
+        if (cond()) return true;
+        if (!clicked && audioScreen()) {
+            clicked = true;
+            document.body.dispatchEvent(
+                new MouseEvent("click", {
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: 50,
+                    clientY: 50,
+                }),
+            );
+        } else if (!audioScreen()) {
+            clicked = false;
+        }
+        await new Promise((r) => setTimeout(r, 25));
+    }
+    return false;
+}
+
+function wordSpans() {
+    return [...document.querySelectorAll("span")].filter(
+        (s) => s.children.length === 0 && norm(s.textContent).length > 0,
+    );
+}
+
+function statementWordsOnScreen(statement) {
+    const wanted = statement
+        .filter((w) => !w.disabled)
+        .map((w) => norm(w.word));
+    const texts = wordSpans().map((s) => norm(s.textContent));
+    return wanted.every((w) => texts.includes(w));
+}
+
+function findWordSpan(word, usedSet) {
+    return wordSpans().find(
+        (s) => norm(s.textContent) === norm(word) && !usedSet.has(s),
+    );
+}
+
+async function runMarkWord(items, base) {
+    const t0 = performance.now();
+    for (let i = 0; i < items.length; i++) {
+        const statement = items[i].statement;
+        const solutionWords = statement
+            .filter((w) => w.solution)
+            .map((w) => w.word);
+        const want = base + i;
+
+        if (
+            !(await waitFor(
+                () =>
+                    passedCount() === want && statementWordsOnScreen(statement),
+            ))
+        ) {
+            console.log(
+                i + 1,
+                "not ready, passed=",
+                passedCount(),
+                "want",
+                want,
+            );
+            break;
+        }
+
+        const used = new Set();
+        let failed = false;
+        for (const w of solutionWords) {
+            const span = findWordSpan(w, used);
+            if (!span) {
+                console.log(i + 1, "no span for", JSON.stringify(w));
+                failed = true;
+                break;
+            }
+            used.add(span);
+            span.click();
+            await new Promise((r) => setTimeout(r, 250));
+        }
+        if (failed) break;
+        console.log(
+            i + 1,
+            statement
+                .map((w) => w.word)
+                .join("")
+                .trim(),
+            "->",
+            solutionWords.join(", "),
+        );
+
+        if (i === items.length - 1) break;
+        if (
+            !(await waitFor(() => passedCount() > want || passedCount() === -1))
+        ) {
+            console.log(i + 1, "not accepted, passed=", passedCount());
+            break;
+        }
+    }
+    console.log(
+        "total",
+        Math.round(performance.now() - t0),
+        "ms",
+        "passed=",
+        passedCount(),
+    );
 }
 
 async function run() {
-    const taskId = location.pathname.match(/tasks\/(\d+)/)[1]
-    const lessonId = location.pathname.match(/lessons\/(\d+)/)[1]
-    const res = await fetch(`https://my.lingu.com/api/lessons/${lessonId}/tasks/${taskId}`, { credentials: 'include' })
-    const items = (await res.json()).task.items
+    const taskId = location.pathname.match(/tasks\/(\d+)/)[1];
+    const lessonId = location.pathname.match(/lessons\/(\d+)/)[1];
+    const res = await fetch(
+        `https://my.lingu.com/api/lessons/${lessonId}/tasks/${taskId}`,
+        { credentials: "include" },
+    );
+    const data = (await res.json()).task;
+    const items = data.items;
 
-    document.querySelector('button[title="Почніть"]')?.click()
+    const startBtn = document.querySelector('button[title="Почніть"]');
+    if (startBtn) startBtn.click();
 
-    const t0 = performance.now()
-    let prevSrc = null
-
-    for (let i = 0; i < items.length; i++) {
-        const options = items[i].options
-        const correct = options.find(o => o.correct).answer
-
-        if (!await poll(() => { const s = speedUpVideo(); return s && s !== prevSrc ? s : false }, 20000)) {
-            console.log(i + 1, 'no new video')
-            break
-        }
-        prevSrc = document.querySelector('video').currentSrc
-
-        if (!await poll(() => optionsOnScreen(options), 20000)) {
-            console.log(i + 1, 'no options')
-            break
-        }
-        findButton(correct).click()
-        console.log(i + 1, correct, 'ok')
+    if (!(await waitFor(() => passedCount() > 0))) {
+        console.log("no pagination at start");
+        return;
     }
-    console.log('total', Math.round(performance.now() - t0), 'ms')
+    const base = passedCount();
+    console.log(
+        "base passed =",
+        base,
+        "type =",
+        data.type,
+        "items =",
+        items.length,
+    );
+
+    if (
+        data.type === "Tasks::MarkWord" ||
+        data.type === "Tasks::MarkWordAudio"
+    ) {
+        await runMarkWord(items, base);
+    } else {
+        console.log("unsupported type:", data.type);
+    }
 }
 
-run()
+run();
