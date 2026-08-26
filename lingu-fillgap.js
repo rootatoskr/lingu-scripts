@@ -52,18 +52,49 @@ function realClick(el) {
     );
 }
 
-function buttonTexts() {
-    return [...document.querySelectorAll("button")].map((b) =>
-        norm(b.textContent),
-    );
+// звук грає через howler.js (Web Audio, не <audio>), і перехід чекає його події 'end'.
+// прискорюємо всі активні звуки — подія 'end' настає майже одразу
+function speedUpAudio() {
+    const H = window.Howler;
+    if (!H || !H._howls) return false;
+    let touched = false;
+    for (const h of H._howls) {
+        try {
+            if (h.playing && h.playing()) {
+                h.rate(16);
+                touched = true;
+            }
+        } catch (e) {}
+    }
+    return touched;
 }
 
-// останній збіг: в InlineDropdown після вибору слово є і в заповненому пропуску, і в списку варіантів
-function findLastButton(word) {
-    const all = [...document.querySelectorAll("button")].filter(
-        (b) => norm(b.textContent) === norm(word),
-    );
-    return all[all.length - 1];
+function contentButtons() {
+    return [...document.querySelectorAll("button")].filter((b) => {
+        if (b.title) return false;
+        return norm(b.textContent).length > 0;
+    });
+}
+
+function buttonTexts() {
+    return contentButtons().map((b) => norm(b.textContent));
+}
+
+function dropdownSegments(groupCount) {
+    const btns = contentButtons();
+    if (groupCount <= 1) return btns.length > 0 ? [btns] : null;
+    const starts = [];
+    btns.forEach((b, i) => {
+        if (norm(b.textContent) === "•••") starts.push(i);
+    });
+    if (starts.length !== groupCount) return null;
+    const segs = [];
+    for (let k = 0; k < groupCount; k++) {
+        const from = starts[k] + 1;
+        const to = k + 1 < starts.length ? starts[k + 1] : btns.length;
+        segs.push(btns.slice(from, to));
+    }
+    return segs;
 }
 
 function allAnswersOnScreen(groups) {
@@ -71,27 +102,35 @@ function allAnswersOnScreen(groups) {
     return groups.every((g) => g.every((a) => texts.includes(norm(a))));
 }
 
-function audioScreen() {
-    return document.body.innerText.includes("Натисніть, щоб відтворити звук");
-}
-
 async function waitFor(cond, timeout = 15000) {
     const t0 = performance.now();
-    let clicked = false;
     while (performance.now() - t0 < timeout) {
         if (cond()) return true;
-        if (!clicked && audioScreen()) {
-            clicked = true;
-            document.body.dispatchEvent(
-                new MouseEvent("click", {
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: 50,
-                    clientY: 50,
-                }),
-            );
-        } else if (!audioScreen()) {
-            clicked = false;
+        await new Promise((r) => setTimeout(r, 25));
+    }
+    return false;
+}
+
+// очікування наступного пункту: весь час прискорюємо звук, що грає
+async function waitNext(want, timeout = 15000) {
+    const t0 = performance.now();
+    while (performance.now() - t0 < timeout) {
+        if (passedCount() > want) return true;
+        speedUpAudio();
+        await new Promise((r) => setTimeout(r, 25));
+    }
+    return false;
+}
+
+async function waitStable(cond, timeout = 15000, stableMs = 150) {
+    const t0 = performance.now();
+    let stableSince = null;
+    while (performance.now() - t0 < timeout) {
+        if (cond()) {
+            if (stableSince === null) stableSince = performance.now();
+            if (performance.now() - stableSince >= stableMs) return true;
+        } else {
+            stableSince = null;
         }
         await new Promise((r) => setTimeout(r, 25));
     }
@@ -116,7 +155,11 @@ async function run(delay = 300) {
         return;
     }
 
-    const startBtn = document.querySelector('button[title="Почніть"]');
+    console.log("Howler present:", !!window.Howler);
+
+    const startBtn = document.querySelector(
+        'button[title="Почніть"], button[title="Start"]',
+    );
     if (startBtn) startBtn.click();
 
     if (!(await waitFor(() => passedCount() > 0))) {
@@ -145,8 +188,11 @@ async function run(delay = 300) {
         const want = base + i;
 
         if (
-            !(await waitFor(
-                () => passedCount() === want && allAnswersOnScreen(groups),
+            !(await waitStable(
+                () =>
+                    passedCount() === want &&
+                    allAnswersOnScreen(groups) &&
+                    dropdownSegments(groups.length) !== null,
             ))
         ) {
             console.log(
@@ -160,24 +206,42 @@ async function run(delay = 300) {
             break;
         }
 
+        const segs = dropdownSegments(groups.length);
+        if (!segs) {
+            console.log(i + 1, "no segments", buttonTexts().join("|"));
+            break;
+        }
+
+        const targets = [];
         let failed = false;
-        for (const w of words) {
-            const btn = findLastButton(w);
+        for (let k = 0; k < words.length; k++) {
+            const seg = segs[k] || segs[segs.length - 1];
+            const btn = seg.find((b) => norm(b.textContent) === norm(words[k]));
             if (!btn) {
-                console.log(i + 1, "no button for", w, buttonTexts().join("|"));
+                console.log(
+                    i + 1,
+                    "no button for",
+                    words[k],
+                    "in segment",
+                    k,
+                    "::",
+                    seg.map((b) => norm(b.textContent)).join("|"),
+                );
                 failed = true;
                 break;
             }
+            targets.push(btn);
+        }
+        if (failed) break;
+
+        for (const btn of targets) {
             realClick(btn);
             await new Promise((r) => setTimeout(r, delay));
         }
-        if (failed) break;
         console.log(i + 1, items[i].statement, "->", words.join(" + "));
 
         if (i === items.length - 1) break;
-        if (
-            !(await waitFor(() => passedCount() > want || passedCount() === -1))
-        ) {
+        if (!(await waitNext(want))) {
             console.log(i + 1, "not accepted, passed=", passedCount());
             break;
         }

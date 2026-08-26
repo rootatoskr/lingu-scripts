@@ -52,44 +52,47 @@ function realClick(el) {
     );
 }
 
-function buttonTexts() {
-    return [...document.querySelectorAll("button")].map((b) =>
-        norm(b.textContent),
+function wordButtons() {
+    return [...document.querySelectorAll("button[data-value]")].filter(
+        (b) => !b.disabled && !b.classList.contains("hide"),
     );
 }
 
+function buttonTexts() {
+    return wordButtons().map((b) => norm(b.dataset.value));
+}
+
 function findButton(word) {
-    return [...document.querySelectorAll("button")].find(
-        (b) => norm(b.textContent) === norm(word),
-    );
+    return wordButtons().find((b) => norm(b.dataset.value) === norm(word));
 }
 
 function wordsOnScreen(words) {
     const texts = buttonTexts();
-    return words.every((w) => texts.includes(norm(w)));
+    if (texts.length !== words.length) return false;
+    const a = [...texts].sort();
+    const b = words.map(norm).sort();
+    return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function audioScreen() {
-    return document.body.innerText.includes("Натисніть, щоб відтворити звук");
-}
-
+// аудіо-заставка зникає сама за ~100мс — клікати по ній не треба, лише чекати
 async function waitFor(cond, timeout = 15000) {
     const t0 = performance.now();
-    let clicked = false;
     while (performance.now() - t0 < timeout) {
         if (cond()) return true;
-        if (!clicked && audioScreen()) {
-            clicked = true;
-            document.body.dispatchEvent(
-                new MouseEvent("click", {
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: 50,
-                    clientY: 50,
-                }),
-            );
-        } else if (!audioScreen()) {
-            clicked = false;
+        await new Promise((r) => setTimeout(r, 25));
+    }
+    return false;
+}
+
+async function waitStable(cond, timeout = 15000, stableMs = 150) {
+    const t0 = performance.now();
+    let stableSince = null;
+    while (performance.now() - t0 < timeout) {
+        if (cond()) {
+            if (stableSince === null) stableSince = performance.now();
+            if (performance.now() - stableSince >= stableMs) return true;
+        } else {
+            stableSince = null;
         }
         await new Promise((r) => setTimeout(r, 25));
     }
@@ -135,11 +138,12 @@ async function run(delay = 250) {
     for (let i = 0; i < items.length; i++) {
         const prefilled = items[i].prefilled || 0;
         const order = items[i].solution.split(" ").slice(prefilled);
+        const allWords = items[i].words;
         const want = base + i;
 
         if (
-            !(await waitFor(
-                () => passedCount() === want && wordsOnScreen(order),
+            !(await waitStable(
+                () => passedCount() === want && wordsOnScreen(allWords),
             ))
         ) {
             console.log(
