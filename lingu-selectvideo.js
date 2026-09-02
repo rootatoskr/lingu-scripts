@@ -1,4 +1,4 @@
-// lingu-scripts/lingu-markword.js
+// lingu-scripts/lingu-selectvideo.js
 
 function dashRow() {
     const p = document.querySelector(".dashed-pagination");
@@ -26,117 +26,68 @@ function norm(s) {
     return (s || "").replace(/\s+/g, " ").trim();
 }
 
-function audioScreen() {
-    return document.body.innerText.includes("Натисніть, щоб відтворити звук");
+function realClick(el) {
+    const r = el.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    const base = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clientX: x,
+        clientY: y,
+        view: window,
+        button: 0,
+        buttons: 1,
+        pointerId: 1,
+        pointerType: "mouse",
+        isPrimary: true,
+    };
+    el.dispatchEvent(new PointerEvent("pointerdown", base));
+    el.dispatchEvent(new MouseEvent("mousedown", base));
+    el.dispatchEvent(new PointerEvent("pointerup", { ...base, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
+    el.dispatchEvent(
+        new MouseEvent("click", { ...base, buttons: 0, detail: 1 }),
+    );
+}
+
+function findButton(text) {
+    return [...document.querySelectorAll("button")].find(
+        (b) => norm(b.textContent) === norm(text),
+    );
+}
+
+function speedUpVideo() {
+    const v = document.querySelector("video");
+    if (!v) return null;
+    v.muted = true;
+    if (v.playbackRate !== 16) v.playbackRate = 16;
+    if (v.paused && v.currentTime < v.duration) v.play().catch(() => {});
+    return v.currentSrc;
+}
+
+function optionsOnScreen(options) {
+    const wanted = options.map((o) => o.answer);
+    const buttons = [...document.querySelectorAll("button")].map((b) =>
+        norm(b.textContent),
+    );
+    const matched = wanted.filter((w) => buttons.includes(norm(w)));
+    const extraMatches = buttons.filter((t) => wanted.map(norm).includes(t));
+    return (
+        matched.length === wanted.length &&
+        extraMatches.length === wanted.length
+    );
 }
 
 async function waitFor(cond, timeout = 15000) {
     const t0 = performance.now();
-    let clicked = false;
     while (performance.now() - t0 < timeout) {
         if (cond()) return true;
-        if (!clicked && audioScreen()) {
-            clicked = true;
-            document.body.dispatchEvent(
-                new MouseEvent("click", {
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: 50,
-                    clientY: 50,
-                }),
-            );
-        } else if (!audioScreen()) {
-            clicked = false;
-        }
-        await new Promise((r) => setTimeout(r, 25));
+        speedUpVideo();
+        await new Promise((r) => setTimeout(r, 30));
     }
     return false;
-}
-
-function wordSpans() {
-    return [...document.querySelectorAll("span")].filter(
-        (s) => s.children.length === 0 && norm(s.textContent).length > 0,
-    );
-}
-
-function statementWordsOnScreen(statement) {
-    const wanted = statement
-        .filter((w) => !w.disabled)
-        .map((w) => norm(w.word));
-    const texts = wordSpans().map((s) => norm(s.textContent));
-    return wanted.every((w) => texts.includes(w));
-}
-
-function findWordSpan(word, usedSet) {
-    return wordSpans().find(
-        (s) => norm(s.textContent) === norm(word) && !usedSet.has(s),
-    );
-}
-
-async function runMarkWord(items, base) {
-    const t0 = performance.now();
-    for (let i = 0; i < items.length; i++) {
-        const statement = items[i].statement;
-        const solutionWords = statement
-            .filter((w) => w.solution)
-            .map((w) => w.word);
-        const want = base + i;
-
-        if (
-            !(await waitFor(
-                () =>
-                    passedCount() === want && statementWordsOnScreen(statement),
-            ))
-        ) {
-            console.log(
-                i + 1,
-                "not ready, passed=",
-                passedCount(),
-                "want",
-                want,
-            );
-            break;
-        }
-
-        const used = new Set();
-        let failed = false;
-        for (const w of solutionWords) {
-            const span = findWordSpan(w, used);
-            if (!span) {
-                console.log(i + 1, "no span for", JSON.stringify(w));
-                failed = true;
-                break;
-            }
-            used.add(span);
-            span.click();
-            await new Promise((r) => setTimeout(r, 250));
-        }
-        if (failed) break;
-        console.log(
-            i + 1,
-            statement
-                .map((w) => w.word)
-                .join("")
-                .trim(),
-            "->",
-            solutionWords.join(", "),
-        );
-
-        if (i === items.length - 1) break;
-        if (
-            !(await waitFor(() => passedCount() > want || passedCount() === -1))
-        ) {
-            console.log(i + 1, "not accepted, passed=", passedCount());
-            break;
-        }
-    }
-    console.log(
-        "total",
-        Math.round(performance.now() - t0),
-        "ms",
-        "passed=",
-        passedCount(),
-    );
 }
 
 async function run() {
@@ -149,7 +100,14 @@ async function run() {
     const data = (await res.json()).task;
     const items = data.items;
 
-    const startBtn = document.querySelector('button[title="Почніть"]');
+    if (data.type !== "Tasks::SelectVideo") {
+        console.log("unsupported type:", data.type);
+        return;
+    }
+
+    const startBtn = document.querySelector(
+        'button[title="Почніть"], button[title="Start"]',
+    );
     if (startBtn) startBtn.click();
 
     if (!(await waitFor(() => passedCount() > 0))) {
@@ -166,14 +124,50 @@ async function run() {
         items.length,
     );
 
-    if (
-        data.type === "Tasks::MarkWord" ||
-        data.type === "Tasks::MarkWordAudio"
-    ) {
-        await runMarkWord(items, base);
-    } else {
-        console.log("unsupported type:", data.type);
+    const t0 = performance.now();
+
+    for (let i = 0; i < items.length; i++) {
+        const correct = items[i].options.find((o) => o.correct).answer;
+        const options = items[i].options;
+        const want = base + i;
+
+        if (
+            !(await waitFor(
+                () => passedCount() === want && optionsOnScreen(options),
+            ))
+        ) {
+            console.log(
+                i + 1,
+                "not ready, passed=",
+                passedCount(),
+                "want",
+                want,
+            );
+            break;
+        }
+        const btn = findButton(correct);
+        if (!btn) {
+            console.log(i + 1, "no button for", correct);
+            break;
+        }
+        realClick(btn);
+        console.log(i + 1, correct, "ok");
+
+        if (i === items.length - 1) break;
+        if (
+            !(await waitFor(() => passedCount() > want || passedCount() === -1))
+        ) {
+            console.log(i + 1, "not accepted, passed=", passedCount());
+            break;
+        }
     }
+    console.log(
+        "total",
+        Math.round(performance.now() - t0),
+        "ms",
+        "passed=",
+        passedCount(),
+    );
 }
 
 run();
