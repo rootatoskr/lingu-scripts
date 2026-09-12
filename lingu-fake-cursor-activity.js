@@ -1,3 +1,5 @@
+// lingu_scripts/lingu-fake-cursor-activity.js
+
 function lingu_fakeCursorActivity() {
     const x = Math.random() * window.innerWidth;
     const y = Math.random() * window.innerHeight;
