@@ -1,4 +1,30 @@
 // lingu-scripts/lingu-filltable.js
+
+const LINGU_TYPE_TO_SCRIPT = {
+    'Tasks::FillGap': 'lingu-fillgap.js',
+    'Tasks::InlineDropdown': 'lingu-fillgap.js',
+    'Tasks::ArrangeWords': 'lingu-arrangewords.js',
+    'Tasks::MarkWord': 'lingu-markword.js',
+    'Tasks::MarkWordAudio': 'lingu-markword.js',
+    'Tasks::SelectVideo': 'lingu-selectvideo.js',
+    'Tasks::ImageObject': 'lingu-imageobject.js',
+    'Tasks::Dictation': 'lingu-dictation.js',
+    'Tasks::WordGames': 'lingu-wordgames-match.js',
+    'Tasks::FillInTable': 'lingu-filltable.js',
+    'Tasks::SelectText': 'lingu-selecttext.js'
+}
+
+function checkTaskType(actualType, expectedType) {
+    if (actualType === expectedType) return true
+    const suggestion = LINGU_TYPE_TO_SCRIPT[actualType]
+    if (suggestion) {
+        console.log(`Тип завдання: ${actualType} -> потрібен скрипт: ${suggestion}`)
+    } else {
+        console.log(`Тип завдання: ${actualType} -> скрипта для цього типу ще немає`)
+    }
+    return false
+}
+
 function norm(s) { return (s || '').replace(/\s+/g, ' ').trim() }
 
 function typeText(field, text) {
@@ -21,7 +47,6 @@ function findInputForQuestion(question) {
         e.children.length === 0 && norm(e.textContent) === norm(question)
     )
     for (const label of labels) {
-        // піднімаємось до рядка таблиці і шукаємо поле введення в ньому
         let row = label
         for (let i = 0; i < 5 && row; i++) {
             const input = row.querySelector ? row.querySelector('input, textarea') : null
@@ -39,10 +64,7 @@ async function run() {
     const data = (await res.json()).task
     const items = data.items
 
-    if (data.type !== 'Tasks::FillInTable') {
-        console.log('unsupported type:', data.type)
-        return
-    }
+    if (!checkTaskType(data.type, 'Tasks::FillInTable')) return
 
     let filled = 0
     for (const item of items) {
