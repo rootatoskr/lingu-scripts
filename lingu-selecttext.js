@@ -162,10 +162,9 @@ function typeText(field, text) {
 }
 
 function findTableInputs() {
-    const all = [...document.querySelectorAll("input")].filter(
-        (el) => el.type === "text",
+    return [...document.querySelectorAll("input")].filter(
+        (el) => el.type === "text" && !el.disabled,
     );
-    return all.filter((el) => !el.className.split(" ").includes("sc-iEkSXm"));
 }
 
 async function runFillInTable(items) {
@@ -199,8 +198,8 @@ async function runFillInTable(items) {
 
 // ---------- FillInBlanks ----------
 function findBlankInputs() {
-    return [...document.querySelectorAll('input[type="text"]')].filter(
-        (el) => el.offsetParent !== null,
+    return [...document.querySelectorAll("input")].filter(
+        (el) => el.type === "text" && el.offsetParent !== null && !el.disabled,
     );
 }
 
