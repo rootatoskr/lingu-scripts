@@ -70,8 +70,18 @@ async function waitFor(cond, timeout = 15000, step = 100) {
     return null;
 }
 
-function getMarkers() {
-    return [...document.querySelectorAll("button.sc-boJDB")];
+// геометричний пошук маркерів: маленькі кнопки, повністю всередині малюнка.
+// не прив'язуємось до хеш-класів styled-components (sc-xxxx) - вони
+// перегенеровуються між збірками фронтенду і вже двічі ламали пошук за класом
+function getMarkers(imgRect) {
+    return [...document.querySelectorAll("button")].filter((el) => {
+        const er = el.getBoundingClientRect();
+        if (er.width === 0 || er.height === 0) return false;
+        if (er.width > 80 || er.height > 80) return false;
+        const insideX = er.left >= imgRect.left - 5 && er.right <= imgRect.right + 5;
+        const insideY = er.top >= imgRect.top - 5 && er.bottom <= imgRect.bottom + 5;
+        return insideX && insideY;
+    });
 }
 
 function markerPercent(marker, imgRect) {
@@ -141,15 +151,43 @@ async function run(delay = 400) {
     }
 
     const markers = await waitFor(() => {
-        const m = getMarkers();
+        const imgRect = img.getBoundingClientRect();
+        const m = getMarkers(imgRect);
         return m.length === items.length ? m : null;
     }, 5000);
 
     if (!markers) {
+        const imgRect = img.getBoundingClientRect();
         console.log(
-            `Невідповідність: items=${items.length}, маркерів=${getMarkers().length} -> не продовжую`,
+            `Невідповідність: items=${items.length}, маркерів=${getMarkers(imgRect).length} -> не продовжую`,
         );
         return;
+    }
+
+    async function waitStable(stableMs = 200, timeout = 5000) {
+        const t0 = performance.now();
+        let lastSnapshot = null;
+        let stableSince = null;
+        while (performance.now() - t0 < timeout) {
+            const snapshot = JSON.stringify([
+                img.getBoundingClientRect(),
+                ...markers.map((m) => m.getBoundingClientRect()),
+            ]);
+            if (snapshot === lastSnapshot) {
+                if (stableSince === null) stableSince = performance.now();
+                if (performance.now() - stableSince >= stableMs) return true;
+            } else {
+                stableSince = null;
+            }
+            lastSnapshot = snapshot;
+            await new Promise((r) => setTimeout(r, 50));
+        }
+        return false;
+    }
+
+    const stable = await waitStable();
+    if (!stable) {
+        console.log("позиції маркерів не стабілізувались вчасно, продовжую обережно");
     }
 
     const imgRect = img.getBoundingClientRect();
