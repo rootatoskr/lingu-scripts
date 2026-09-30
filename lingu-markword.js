@@ -14,6 +14,8 @@ const LINGU_TYPE_TO_SCRIPT = {
     "Tasks::SelectText": "lingu-selecttext.js",
 };
 
+const SETTLE_MS = 300;
+
 function checkTaskTypeMulti(actualType, expectedTypes) {
     if (expectedTypes.includes(actualType)) return true;
     const suggestion = LINGU_TYPE_TO_SCRIPT[actualType];
@@ -108,6 +110,21 @@ async function waitFor(cond, timeout = 15000) {
     return false;
 }
 
+async function waitHeld(cond, holdMs, timeout = 5000) {
+    const t0 = performance.now();
+    let since = null;
+    while (performance.now() - t0 < timeout) {
+        if (cond()) {
+            if (since === null) since = performance.now();
+            if (performance.now() - since >= holdMs) return true;
+        } else {
+            since = null;
+        }
+        await new Promise((r) => setTimeout(r, 25));
+    }
+    return false;
+}
+
 function wordSpans() {
     return [...document.querySelectorAll("span")].filter(
         (s) => s.children.length === 0 && norm(s.textContent).length > 0,
@@ -136,16 +153,24 @@ async function runMarkWord(items, base, delay) {
             .filter((w) => w.solution)
             .map((w) => w.word);
         const want = base + i;
+        const ready = () =>
+            passedCount() === want && statementWordsOnScreen(statement);
 
-        if (
-            !(await waitFor(
-                () =>
-                    passedCount() === want && statementWordsOnScreen(statement),
-            ))
-        ) {
+        if (!(await waitFor(ready))) {
             console.log(
                 i + 1,
                 "not ready, passed=",
+                passedCount(),
+                "want",
+                want,
+            );
+            break;
+        }
+
+        if (!(await waitHeld(ready, SETTLE_MS))) {
+            console.log(
+                i + 1,
+                "screen not stable, passed=",
                 passedCount(),
                 "want",
                 want,
